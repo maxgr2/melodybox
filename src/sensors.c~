@@ -1,0 +1,72 @@
+#include "sys/devices.h"
+#include "sys/cm4.h"
+#include "sys/clock.h"
+
+int32_t median(int32_t data1,int32_t data2,int32_t data3) {
+  int32_t min12=(data1<data2)?data1:data2;
+  int32_t min23=(data2<data3)?data2:data3;
+  int32_t min31=(data3<data1)?data3:data1;
+  return (min12==min23)?min31:((min12==min31)?min23:min12);
+}
+
+float get_sampling_time_us(volatile struct ADCx_registers *ADCx,uint32_t channel) {
+  static const uint32_t ADC_smpr_cycles[8] = 
+    {3,15,28,56,84,112,144,480};
+  static const uint32_t ADC_prediv[4] = 
+    {2,4,6,8};
+  uint32_t ADC_freq=get_APB2CLK()/ADC_prediv[(ADC_common.CCR>>16)&0x3];
+  uint32_t ADC_cycles;
+  if (channel<10) {
+    uint32_t bit_offset=channel*3;
+    uint32_t smpr=((ADCx->SMPR2)>>bit_offset)&0x7;
+    ADC_cycles=ADC_smpr_cycles[smpr];
+  } else if (channel<=18) {
+    uint32_t bit_offset=(channel-10)*3;
+    uint32_t smpr=((ADCx->SMPR1)>>bit_offset)&0x7;
+    ADC_cycles=ADC_smpr_cycles[smpr];
+  } else {
+    ADC_cycles=0;
+  }
+  return (ADC_cycles/(ADC_freq/1000000.));
+}  
+
+void sensors_init() {
+  ADC_common.CCR = 
+    (ADC_common.CCR & ~((1<<23)|(3<<16)))
+    |((1<<23)|(3<<16));
+
+  ADC1.CR2=0x00000000;
+  ADC1.CR1=0x00000100; /* SCAN=1 */
+
+  ADC1.SMPR1= (ADC1.SMPR1 & ~((7<<24)|(7<<21))) | ((7<<24)|(7<<21));
+
+  ADC1.JSQR=(18<<0)|(18<<5)|(18<<10)|(17<<15)|(3<<20);
+  ADC1.JOFR1=0;
+  ADC1.JOFR2=0;
+  ADC1.JOFR3=0;
+  ADC1.JOFR4=0;
+}
+
+void sensors_refresh() {
+  ADC1.CR2 |= 0x1;
+  ADC1.SR &= ~0x4;
+  ADC1.CR2|=(1<<22);
+  while ((ADC1.SR&0x4)==0);
+  ADC1.CR2 &= ~0x1;
+}
+
+static const float VDDA_CAL=3.3;
+static const float T_CAL1=30.0;
+static const float T_CAL2=110.0;
+
+float voltage_sensor() {
+  float VREFIN_VAL=ADC1.JDR4;
+  return ((VDDA_CAL*VREFIN_CAL)/VREFIN_VAL);
+}
+
+float temp_sensor() {
+  float VDDA_VAL=voltage_sensor();
+  float TS_VAL=median(ADC1.JDR1,ADC1.JDR2,ADC1.JDR3);
+  float TS_CAL=(TS_VAL*VDDA_VAL)/VDDA_CAL;
+  return (T_CAL1+(((T_CAL2-T_CAL1)*(TS_CAL-TS_CAL1))/(TS_CAL2-TS_CAL1)));
+}

@@ -1,0 +1,85 @@
+#include <stdio.h>
+#include <math.h>
+#include "sys/cm4.h"
+#include "sys/devices.h"
+#include "sys/init.h"
+#include "sys/clock.h"
+#include "systick.h"
+#include "adc.h"
+
+
+static volatile uint32_t ms=0;
+static volatile uint32_t flag=0;
+static volatile int32_t cpt=0;
+
+void __attribute__((interrupt)) SysTick_Handler() {
+/* assumes 1ms systick */
+  ms++;
+  if (ms==1000) {ms=0; flag=1;}
+}
+
+void periodic_task();
+void init_task();
+
+int main() {
+
+  printf("\e[2J\e[1;1H\e[?25l\r\n");
+  printf("*** Welcome to Nucleo F446 ! ***\r\n");
+  printf("   %08lx-%08lx-%08lx\r\n",U_ID[0],U_ID[1],U_ID[2]);
+  printf("SYSCLK = %9lu Hz\r\n",get_SYSCLK());
+  printf("AHBCLK = %9lu Hz\r\n",get_AHBCLK());
+  printf("APB1CLK =%9lu Hz\r\n",get_APB1CLK());
+  printf("APB2CLK =%9lu Hz\r\n",get_APB2CLK());
+
+  SysTick_init(1000);
+
+  init_task();
+
+  while (1) {
+    while (flag==0) { __WFI();}
+    flag=0;
+    periodic_task();
+  }
+
+return 0;
+}
+
+void init_task() {
+  enable_ADC();
+  enable_DMA2();
+  enable_Vrefint();
+
+  enable_GPIOB();
+  GPIOB.MODER|=(3<<0);
+  GPIOB.PUPDR&=(3<<0);
+
+  ADC_set_sampling_time(&ADC1,8,7); /* max sampling time */
+  ADC_set_sampling_time(&ADC1,17,7); /* max sampling time */
+  ADC_set_sampling_time(&ADC1,18,7); /* max sampling time */
+
+  /* ADC_init_single_channel(&ADC1,8); */
+  uint32_t tab[2]= { 17,18 };
+  ADC_init_sequence(&ADC1,tab,2);
+  /* ADC_init_injected_sequence(&ADC1,tab,4); */
+}
+
+void periodic_task() {
+
+  /* uint32_t res1=ADC_convert_single_channel(&ADC1); */
+  /* printf("\r Value = %4lu",res1); */
+
+  uint32_t res[2];
+  uint32_t n=ADC_convert_sequence(&ADC1,res);
+  if (n==2) {
+    printf("\r #%04lu : { %3lx %3lx } %3hx %3hx %3hx",
+	   cpt,res[0],res[1],VREFIN_CAL,TS_CAL1,TS_CAL2);
+  } else {
+    printf("\r Overrun !!! n=%lu",n);
+  }
+
+  /* ADC_convert_injected_sequence(&ADC1); */
+  /* printf("\r Value = %4lu %4lu %4lu %4lu", */
+  /* 	 ADC1.JDR1,ADC1.JDR2,ADC1.JDR3,ADC1.JDR4); */
+
+  cpt++;
+}
