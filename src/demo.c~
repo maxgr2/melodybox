@@ -1,0 +1,95 @@
+#include <stdio.h>
+#include <math.h>
+#include "sys/cm4.h"
+#include "sys/devices.h"
+#include "sys/init.h"
+#include "sys/clock.h"
+#include "systick.h"
+#include "crc.h"
+#include "led.h"
+#include "sensors.h"
+#include "button.h"
+
+
+volatile uint32_t button_timeout=0;
+
+void __attribute__((interrupt)) EXTI15_10_Handler() {
+  if (EXTI.PR & (1<<13)) {
+    EXTI.PR = (1<<13); /* clear pending register */
+    if (button_timeout==0) {
+      button_timeout=100; /* inhibit button for 100ms */
+      led_mode_switch();
+    }
+  }
+}
+
+static volatile uint32_t ms=0;
+
+void __attribute__((interrupt)) SysTick_Handler() {
+  static uint32_t pwm_phase=1;
+  /* assumes 1ms systick */
+  ms++;
+  if (ms==1000) ms=0;
+  switch (ms) {
+  case 0:
+    pwm_phase^=1;
+  case 100:
+    led_set(1);
+    break;
+  case 50:
+  case 150:
+    led_set(0);
+    break;
+  default:
+    break;
+  }
+  if (pwm_phase) {
+    led_pwm_set_width(ms);
+  } else {
+    led_pwm_set_width(1000-ms);
+  }    
+  if (button_timeout>0) button_timeout--;
+}
+
+
+int main() {
+
+  enable_GPIOA();
+  led_init();
+  enable_TIM2();
+  led_pwm_init(200);
+  enable_GPIOC();
+  button_init();
+  enable_SYSCFG();
+  button_irq_init();
+  enable_ADC();
+  sensors_init();
+  enable_CRC();
+  enable_DMA2();
+  
+  printf("\e[2J\e[1;1H\r\n*** Welcome to Nucleo F446 ! ***\r\n");
+  printf("   %08lx-%08lx-%08lx\r\n",U_ID[0],U_ID[1],U_ID[2]);
+  check_flash_crc32();
+  printf("SYSCLK = %9lu Hz\r\n",get_SYSCLK());
+  printf("AHBCLK = %9lu Hz\r\n",get_AHBCLK());
+  printf("APB1CLK =%9lu Hz\r\n",get_APB1CLK());
+  printf("APB2CLK =%9lu Hz\r\n",get_APB2CLK());
+  printf("Voltage ref sampling time: %5.1fµs\r\n",
+	 ftod(get_sampling_time_us(&ADC1,17)));
+  printf("Temperature sampling time: %5.1fµs\r\n",
+	 ftod(get_sampling_time_us(&ADC1,18)));
+  printf("\r\n");
+ 
+  SysTick_init(1000);
+  
+  while (1) {
+    while (ms) __WFI();
+    if (button_poll()) printf("Hello, World!\r\n");
+    sensors_refresh();
+    printf("Vdda=%5.3fV\tTs=%4.1fC\r",
+  	   ftod(voltage_sensor()),ftod(temp_sensor()));
+  }
+
+return 0;
+}
+
